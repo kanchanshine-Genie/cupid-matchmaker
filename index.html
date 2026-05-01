@@ -86,49 +86,64 @@
     }
 
     async function submitForm() {
-      const courseInput = document.getElementById('courseInput').value.trim();
-      if (!courseInput) { alert('Please paste your course titles and skill areas.'); return; }
-      if (!selectedFile) { alert('Please upload a CV PDF.'); return; }
-      if (selectedFile.size > 10 * 1024 * 1024) { alert('File too large. Max 10 MB.'); return; }
+  const courseInput = document.getElementById('courseInput').value.trim();
+  if (!courseInput) { alert('Please paste your course titles and skill areas.'); return; }
+  if (!selectedFile) { alert('Please upload a CV PDF.'); return; }
+  if (selectedFile.size > 10 * 1024 * 1024) { alert('File too large. Max 10 MB.'); return; }
 
-      showLoading();
-      try {
-        document.getElementById('loading-status').textContent = 'Getting upload URL...';
-        const uploadInfo = await callAppsScript('getUploadUrl', {
-          filename: selectedFile.name,
-          contentType: 'application/pdf'
-        });
-        if (!uploadInfo.success) throw new Error(uploadInfo.error);
+  showLoading();
+  try {
+    document.getElementById('loading-status').textContent = 'Getting upload URL...';
+    const uploadInfo = await callAppsScript('getUploadUrl', {
+      filename: selectedFile.name,
+      contentType: 'application/pdf'
+    });
+    if (!uploadInfo.success) throw new Error(uploadInfo.error);
+    
+    console.log('=== UPLOAD DEBUG ===');
+    console.log('Upload URL:', uploadInfo.uploadUrl);
+    console.log('Selected file:', selectedFile);
+    console.log('File type:', selectedFile.type);
+    console.log('File size:', selectedFile.size);
 
-        document.getElementById('loading-status').textContent = 'Uploading CV...';
-        const arrayBuffer = await selectedFile.arrayBuffer();
-        const uploadResponse = await fetch(uploadInfo.uploadUrl, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/pdf' },
-          body: arrayBuffer
-        });
-        if (!uploadResponse.ok) {
-          const errText = await uploadResponse.text();
-          throw new Error('Upload failed: ' + errText.substring(0, 300));
-        }
-
-        document.getElementById('loading-status').textContent = 'Cupid is reviewing the CV...';
-        const result = await callAppsScript('runMatchmaker', {
-          courseInput: courseInput,
-          uploadKey: uploadInfo.uploadKey,
-          filename: selectedFile.name,
-          contentType: 'application/pdf'
-        });
-        if (!result.success) throw new Error(result.error);
-
-        rawReport = result.report;
-        document.getElementById('report-content').innerHTML = renderMarkdown(result.report);
-        showResult();
-      } catch (err) {
-        document.getElementById('error-message').textContent = err.message || 'Unknown error';
-        showError();
-      }
+    document.getElementById('loading-status').textContent = 'Uploading CV...';
+    
+    // Use the File object directly as body - cleanest approach
+    const uploadResponse = await fetch(uploadInfo.uploadUrl, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/pdf'
+      },
+      body: selectedFile
+    });
+    
+    console.log('Upload response status:', uploadResponse.status);
+    console.log('Upload response headers:', [...uploadResponse.headers.entries()]);
+    
+    if (!uploadResponse.ok) {
+      const errText = await uploadResponse.text();
+      console.error('Full GCS error:', errText);
+      throw new Error('Upload failed: ' + errText.substring(0, 500));
     }
+
+    document.getElementById('loading-status').textContent = 'Cupid is reviewing the CV...';
+    const result = await callAppsScript('runMatchmaker', {
+      courseInput: courseInput,
+      uploadKey: uploadInfo.uploadKey,
+      filename: selectedFile.name,
+      contentType: 'application/pdf'
+    });
+    if (!result.success) throw new Error(result.error);
+
+    rawReport = result.report;
+    document.getElementById('report-content').innerHTML = renderMarkdown(result.report);
+    showResult();
+  } catch (err) {
+    console.error('Full error:', err);
+    document.getElementById('error-message').textContent = err.message || 'Unknown error';
+    showError();
+  }
+}
 
     function showLoading() { swap('loading-view'); }
     function showResult() { swap('result-view'); }
