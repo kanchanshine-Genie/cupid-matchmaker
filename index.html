@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cupid — SME Matchmaker</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>
+        <svg width="32" height="32" viewBox="0 0 32 32" style="vertical-align: -4px; margin-right: 8px; filter: drop-shadow(0 0 12px rgba(255,45,140,0.6));">
+          <path d="M16 28 L6 18 C2 14 2 8 6 5 C9 2 13 3 16 6 C19 3 23 2 26 5 C30 8 30 14 26 18 Z" fill="url(#heartGrad)" />
+          <defs>
+            <linearGradient id="heartGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#ff6b9d"/>
+              <stop offset="100%" stop-color="#d946ef"/>
+            </linearGradient>
+          </defs>
+        </svg>
+        Cupid
+      </h1>
+      <p class="tagline">SME Matchmaker · Where the right candidate finds the right course</p>
+    </header>
+
+    <div id="form-view">
+      <div class="form-group">
+        <label for="courseInput">Course Titles & Skill Areas</label>
+        <p class="help-text">Paste your list of course titles with associated skill areas. One course per line.</p>
+        <textarea id="courseInput" rows="10" placeholder="Example:&#10;Master Dialogflow CX Agents (3h) — Skill Areas: Conversational AI Design&#10;Build Reproducible SAS EG Flows (3h) — Skill Areas: Core Skills; Data Structuring; Workflow Automation"></textarea>
+      </div>
+      <div class="form-group">
+        <label for="cvFile">Upload Candidate CV (PDF)</label>
+        <p class="help-text">Upload a single PDF file. Max size: 10 MB.</p>
+        <input type="file" id="cvFile" accept="application/pdf" />
+        <div id="fileName" class="file-name"></div>
+      </div>
+      <button id="submitBtn" onclick="submitForm()">Find the Match</button>
+    </div>
+
+    <div id="loading-view" style="display:none;">
+      <div class="spinner"></div>
+      <h2>Cupid is working...</h2>
+      <p id="loading-status">Reviewing the CV against your course list. This usually takes 30–60 seconds.</p>
+    </div>
+
+    <div id="result-view" style="display:none;">
+      <div class="result-header">
+        <button class="secondary-btn" onclick="resetForm()">← New Evaluation</button>
+        <button class="secondary-btn" onclick="copyReport()">Copy Report</button>
+      </div>
+      <div id="report-content"></div>
+    </div>
+
+    <div id="error-view" style="display:none;">
+      <div class="error-box">
+        <h2>Something went wrong</h2>
+        <p id="error-message"></p>
+        <button onclick="resetForm()">Try Again</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // === REPLACE WITH YOUR APPS SCRIPT WEB APP URL ===
+    const APPS_SCRIPT_URL = 'https://script.google.com/a/macros/hurix.com/s/AKfycbx2U-glt5FfwSwszYfrI6rKYQyE9CPUZTk55aYWUkvdv-DMHyPd1ORkVQFobDz9Zt0S/exec';
+
+    let selectedFile = null;
+    let rawReport = '';
+
+    document.getElementById('cvFile').addEventListener('change', function(e) {
+      selectedFile = e.target.files[0];
+      if (selectedFile) {
+        document.getElementById('fileName').textContent = '✓ ' + selectedFile.name;
+      }
+    });
+
+    async function callAppsScript(action, data) {
+      const response = await fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(Object.assign({ action: action }, data))
+      });
+      return response.json();
+    }
+
+    async function submitForm() {
+      const courseInput = document.getElementById('courseInput').value.trim();
+      if (!courseInput) { alert('Please paste your course titles and skill areas.'); return; }
+      if (!selectedFile) { alert('Please upload a CV PDF.'); return; }
+      if (selectedFile.size > 10 * 1024 * 1024) { alert('File too large. Max 10 MB.'); return; }
+
+      showLoading();
+      try {
+        document.getElementById('loading-status').textContent = 'Getting upload URL...';
+        const uploadInfo = await callAppsScript('getUploadUrl', {
+          filename: selectedFile.name,
+          contentType: 'application/pdf'
+        });
+        if (!uploadInfo.success) throw new Error(uploadInfo.error);
+
+        document.getElementById('loading-status').textContent = 'Uploading CV...';
+        const arrayBuffer = await selectedFile.arrayBuffer();
+        const uploadResponse = await fetch(uploadInfo.uploadUrl, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/pdf' },
+          body: arrayBuffer
+        });
+        if (!uploadResponse.ok) {
+          const errText = await uploadResponse.text();
+          throw new Error('Upload failed: ' + errText.substring(0, 300));
+        }
+
+        document.getElementById('loading-status').textContent = 'Cupid is reviewing the CV...';
+        const result = await callAppsScript('runMatchmaker', {
+          courseInput: courseInput,
+          uploadKey: uploadInfo.uploadKey,
+          filename: selectedFile.name,
+          contentType: 'application/pdf'
+        });
+        if (!result.success) throw new Error(result.error);
+
+        rawReport = result.report;
+        document.getElementById('report-content').innerHTML = renderMarkdown(result.report);
+        showResult();
+      } catch (err) {
+        document.getElementById('error-message').textContent = err.message || 'Unknown error';
+        showError();
+      }
+    }
+
+    function showLoading() { swap('loading-view'); }
+    function showResult() { swap('result-view'); }
+    function showError() { swap('error-view'); }
+    function swap(viewId) {
+      ['form-view', 'loading-view', 'result-view', 'error-view'].forEach(function(id) {
+        document.getElementById(id).style.display = id === viewId ? 'block' : 'none';
+      });
+    }
+
+    function resetForm() {
+      document.getElementById('courseInput').value = '';
+      document.getElementById('cvFile').value = '';
+      document.getElementById('fileName').textContent = '';
+      selectedFile = null;
+      rawReport = '';
+      swap('form-view');
+    }
+
+    function copyReport() {
+      navigator.clipboard.writeText(rawReport).then(function() { alert('Report copied.'); });
+    }
+
+    function renderMarkdown(md) {
+      let html = md;
+      html = html.replace(/((?:\|.*\|\n)+)/g, function(match) {
+        const lines = match.trim().split('\n');
+        if (lines.length < 2) return match;
+        const headers = lines[0].split('|').slice(1, -1).map(function(s) { return s.trim(); });
+        const rows = lines.slice(2).map(function(line) { return line.split('|').slice(1, -1).map(function(s) { return s.trim(); }); });
+        let table = '<table><thead><tr>';
+        headers.forEach(function(h) { table += '<th>' + h + '</th>'; });
+        table += '</tr></thead><tbody>';
+        rows.forEach(function(row) {
+          table += '<tr>';
+          row.forEach(function(cell) { table += '<td>' + cell + '</td>'; });
+          table += '</tr>';
+        });
+        table += '</tbody></table>';
+        return table;
+      });
+      html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+      html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+      html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+      html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+      html = html.replace(/^---$/gm, '<hr>');
+      html = html.replace(/\n\n+/g, '</p><p>');
+      html = '<p>' + html + '</p>';
+      html = html.replace(/<p>(<h[1-6]>)/g, '$1');
+      html = html.replace(/(<\/h[1-6]>)<\/p>/g, '$1');
+      html = html.replace(/<p>(<table>)/g, '$1');
+      html = html.replace(/(<\/table>)<\/p>/g, '$1');
+      html = html.replace(/<p>(<hr>)<\/p>/g, '$1');
+      return html;
+    }
+  </script>
+</body>
+</html>
